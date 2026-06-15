@@ -1,0 +1,56 @@
+[project]
+name = "dam-ai-worker"
+version = "0.1.0"
+description = "DAM Platform — AI processing plane: ingestion pipelines + model-serving endpoints."
+requires-python = ">=3.11"
+dependencies = [
+    "arq>=0.26",
+    "redis>=5.2",
+    "asyncpg>=0.30",
+    "boto3>=1.35",
+    "qdrant-client>=1.12",
+    "opensearch-py>=2.7",
+    "httpx>=0.27",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "numpy>=1.26",
+    "pillow>=10.4",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+# Heavy ML deps. Install the CUDA torch/torchvision FIRST (kept out of this list
+# so pip won't upgrade them to a CPU wheel from PyPI), then install ".[ml]":
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+#   pip install -e ".[ml]"
+ml = [
+    "sentence-transformers>=3.2",   # BGE-M3 text embeddings
+    # Pin transformers < 4.54: newer versions reference torch.float8_e8m0fnu,
+    # which only exists in torch >= 2.7 (cu124's newest is torch 2.6.0).
+    "transformers>=4.46,<4.54",
+    "open-clip-torch>=2.26",        # image + text(shared space) embeddings
+    "docling>=2.5",                 # document parsing -> structured MD/JSON
+]
+audio = [
+    "faster-whisper>=1.0",          # P2 ASR
+    "pyannote.audio>=3.3",          # P2 diarization
+]
+vision = [
+    "insightface>=0.7",             # P3 faces (RetinaFace + ArcFace)
+    "onnxruntime-gpu>=1.19",
+    "ultralytics>=8.3",             # P3 object detection (YOLO)
+    "scenedetect>=0.6",             # P3 shot detection
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["worker"]
