@@ -294,6 +294,14 @@ async def search(req: SearchRequest, user: CurrentUser, db: Annotated[AsyncSessi
                 # match survives across grammatical number: "curtain" ⊆ a caption's "curtains".
                 flat = flat_by_aid.get(hits[i].asset_id, set())
                 return bool(qtokens) and {_deplural(w) for w in qtokens} <= {_deplural(w) for w in flat}
+
+            def _name_hit(i: int) -> bool:
+                # Query fully covered by the asset's TITLE/FILENAME tokens — a deliberate name
+                # lookup ("MNDA", "ARUNI"), strong evidence even for a document, unlike an
+                # incidental hit on one word buried in a long body.
+                name = set(decompose._seg_tokens(hits[i].title or "")) \
+                    | set(decompose._seg_tokens(hits[i].filename or ""))
+                return bool(qtokens) and {_deplural(w) for w in qtokens} <= {_deplural(w) for w in name}
             # The cross-encoder is AUTHORITATIVE only when CONFIDENT — i.e. it found at least one
             # strong match for this query (some hit >= RERANK_CONFIDENT). Then a near-zero score
             # genuinely means "irrelevant" and we drop it. When the reranker is NOT confident
@@ -306,17 +314,32 @@ async def search(req: SearchRequest, user: CurrentUser, db: Annotated[AsyncSessi
             confident = any(s >= C.RERANK_CONFIDENT for s in rr.values())
 
             def _keep(i: int) -> bool:
-                if set(hits[i].matched_signals) & {"image", "face"}:
+                sig = set(hits[i].matched_signals)
+                if sig & {"image", "face"}:
                     return True
-                # A BM25 KEYWORD/OCR/transcript match is now reliable grounding: matching is EXACT
-                # (fuzzy is off) plus curated SYNONYMS (brown↔beige, car↔vehicle), so a keyword hit
-                # means the query word OR a deliberate synonym is literally in the asset. This is
-                # what lets single-word synonym queries ("khaki", "navy", "automobile") survive —
-                # the reranker scores them ~0 because it doesn't know khaki≈beige, but BM25 does.
-                if set(hits[i].matched_signals) & {"keyword", "seen", "said", "transcript"}:
+                # Caption/OCR ("seen") and speech ("said"/"transcript") grounding: an EXACT-or-
+                # SYNONYM hit (fuzzy is off; brown↔beige, car↔vehicle) in SHORT visual/spoken text
+                # is strong evidence, and the reranker is unreliable there (scores bare keywords
+                # ~0). Always rescue — this is what keeps single-word synonym queries ("khaki",
+                # "navy", "automobile") alive: BM25 knows khaki≈beige, the reranker doesn't.
+                if sig & {"seen", "said", "transcript"}:
                     return True
-                if _literal(i):
-                    return True
+                # Plain keyword / full literal coverage. For a caption- or transcript-bearing asset
+                # this is strong grounding (terse text, exact-or-synonym hit). For a DOCUMENT it is
+                # not enough on its own: the platform's own spec/BRD lists example queries ("temple",
+                # "beach sunset", "running") that BM25 matches — and the cross-encoder even endorses,
+                # since the word IS in that passage — though the document isn't ABOUT them. So a
+                # document body hit is kept only when it's TOPICAL, proven by TWO independent
+                # channels agreeing: a deliberate NAME lookup (query in title/filename — "MNDA",
+                # "ARUNI"), OR independent SEMANTIC (dense) corroboration. The dense embedding fires
+                # for a real topic ("requirements", "non-disclosure") but not for an example word
+                # buried in a feature list, which cleanly separates topical from incidental. An
+                # incidental doc keyword hit returns False here so the rerank gate below can't
+                # re-admit it on the example word's literal presence.
+                if sig & {"keyword"} or _literal(i):
+                    if hits[i].type != "document":
+                        return True
+                    return bool(_name_hit(i) or sig & {"semantic"})
                 # Rerank bypass. The cross-encoder is RELIABLE same-script (clears 0.10 = relevant),
                 # but only SOMETIMES right across scripts — it nails police↔पुलीस (0.74) yet noise-
                 # scores "pizza" vs a Hindi window at 0.11. So a cross-script passage must clear the
@@ -375,6 +398,21 @@ async def search(req: SearchRequest, user: CurrentUser, db: Annotated[AsyncSessi
             for h in hits:
                 if h.snippet and "rerank" not in h.matched_signals:
                     h.matched_signals = h.matched_signals + ["rerank"]
+
+    # Image-floor suppression for NAME/keyword answers that have no rerankable snippet. When the
+    # only text hit is a filename/keyword match with no body highlight (a document found by its
+    # NAME — "MNDA", "ARUNI"), the rerank+grounding stage above is skipped (text_idx is empty), so
+    # bare image hits sitting at the SigLIP noise floor (sig == {"image"}, no lexical/semantic
+    # corroboration, fused ~0.016) ride through as a flood of unrelated photos. If a grounded
+    # textual answer exists, those images are guesses — drop them and keep the answer. Visual
+    # queries are unaffected: their image hits carry caption snippets, so text_idx is non-empty and
+    # this branch never runs; a gibberish query with no grounded answer is left alone (nothing to
+    # anchor on — the documented tiny-corpus SigLIP floor, which resolves at scale).
+    if do_rerank and not text_idx and req.q:
+        grounded = any(set(h.matched_signals) & {"keyword", "seen", "said", "transcript", "face", "semantic"}
+                       for h in hits)
+        if grounded and any(set(h.matched_signals) == {"image"} for h in hits):
+            hits = [h for h in hits if set(h.matched_signals) != {"image"}]
 
     # LLM relevance refine — OPT-IN (req.llm_refine), long queries only. In theory an LLM
     # judges the top candidates by meaning to drop tangential hits. MEASURED ON THIS BOX it

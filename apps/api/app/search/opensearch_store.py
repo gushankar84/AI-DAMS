@@ -43,7 +43,23 @@ _SYNONYMS = [
     # object hypernyms (a search for the category finds the specific, and vice-versa)
     "vehicle,car,automobile,auto,suv,jeep,truck,van,lorry",
     "sofa,couch,settee",
+    "chair,armchair,seat,stool",
+    "laptop,computer,notebook,pc",
+    "phone,smartphone,mobile,cellphone,telephone,handset",
+    "glasses,spectacles,eyeglasses,goggles",
+    "bag,handbag,purse,backpack",
     "kid,child",
+    "baby,infant,toddler",
+    # scene synonyms
+    "beach,seashore,shore,coast,coastline,seaside,oceanfront",
+    "forest,jungle,woodland,woods",
+    "city,town,urban,metropolis",
+    "mountain,hill,peak",
+    # activity synonyms (gerunds + base; minimal_english only strips plural -s, so these stay)
+    "running,jogging,sprinting,run,jog,sprint",
+    "walking,strolling,walk",
+    "dancing,dance",
+    "speaking,talking,addressing,speech",
     # people synonyms (captions say "male/female adult"; users type man/woman/lady)
     "man,male,gentleman",
     "woman,female,lady",
